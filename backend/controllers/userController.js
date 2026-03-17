@@ -45,11 +45,13 @@ const registerUser = async (req, res) => {
 
     // Authorization logic:
     // 1. If no users exist, allow creating first admin
-    // 2. If users exist, only logged-in admin can create new users
+    // 2. If users exist:
+    //    - Allow creating 'seller' publicly
+    //    - Only logged-in admin can create new 'admin' users
     const userCount = await User.countDocuments();
     
-    if (userCount > 0) {
-      // Check for auth (since we'll remove it from the route)
+    if (userCount > 0 && (role === 'admin' || !role)) {
+      // Check for auth if trying to create an admin
       const authHeader = req.headers.authorization;
       if (!authHeader || !authHeader.startsWith('Bearer')) {
         return res.status(401).json({ message: 'Not authorized, no token' });
