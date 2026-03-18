@@ -2,7 +2,7 @@ import { Schema, model, Model } from "mongoose";
 import { BaseEntity } from "../types/query.types";
 
 export type ProductType = "measurable" | "non-measurable";
-export type MeasurableUnit = "kg" | "g" | "l" | "ml" | "piece" | "pack" | "box";
+export type MeasurableUnit = "kg" | "g" | "l" | "ml" | "piece" | "box";
 
 export interface IProduct extends BaseEntity {
   tenantId: string;
@@ -43,7 +43,7 @@ const productSchema = new Schema<IProduct>(
     categories: { type: [String], default: [], index: true },
 
     type: { type: String, enum: ["measurable", "non-measurable"], required: true },
-    unit: { type: String, enum: ["kg", "g", "l", "ml", "piece", "pack", "box"], default: "piece" },
+    unit: { type: String, enum: ["kg", "g", "l", "ml", "piece", "box"], default: "piece" },
 
     comesInBoxes: { type: Boolean, default: false },
     itemsPerBox: { type: Number, default: null },

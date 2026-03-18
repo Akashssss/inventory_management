@@ -13,7 +13,7 @@ const productSchema = mongoose.Schema(
     // Type and Stock
     unitType: { 
       type: String, 
-      enum: ['piece', 'kg', 'gm', 'liter', 'ml'], 
+      enum: ['piece', 'box', 'kg', 'g', 'liter', 'ml'], 
       default: 'piece' 
     },
     isMeasurable: { type: Boolean, default: false },

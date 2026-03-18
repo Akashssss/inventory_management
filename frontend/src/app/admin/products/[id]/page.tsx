@@ -1,8 +1,7 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
-import { useParams } from "next/navigation";
+import { useEffect, useState, useRef } from "react";
+import { useRouter, useParams } from "next/navigation";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { z } from "zod";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -20,28 +19,28 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
+import { MultiSelect } from "@/components/ui/MultiSelect";
 import { toast } from "sonner";
-import { ArrowLeft, Loader2, Save, Image as ImageIcon, X } from "lucide-react";
+import { ArrowLeft, Loader2, Save, Image as ImageIcon, X, AlertCircle } from "lucide-react";
 import Link from "next/link";
-import { useForm as useRHForm } from "react-hook-form";
+import { cn } from "@/lib/utils";
+import { Badge } from "@/components/ui/badge";
 
-// Define the schema based on your backend Product model
 const productSchema = z.object({
-  name: z.string().min(1, "Name is required"),
+  name: z.string().min(1, "Product name is required").max(100, "Name is too long"),
   categoryIds: z.array(z.string()).min(1, "At least one category is required"),
   type: z.enum(["measurable", "non-measurable"]),
-  unit: z.string().min(1, "Unit is required"),
-  stock: z.number().min(0, "Stock cannot be negative"),
-  costPrice: z.number().min(0, "Cost Price must be positive"),
-  sellingPrice: z.number().min(0, "Selling Price must be positive"),
-  lowStockThreshold: z.number().min(0).default(10),
-  isSmallProduct: z.boolean(),
-  comesInBoxes: z.boolean(),
-  itemsPerBox: z.number().nullable(),
-  boxCostPrice: z.number().nullable(),
-  numBoxes: z.number().nullable(),
+  unit: z.string().min(1, "Base unit is required"),
+  stock: z.coerce.number({ message: "Stock must be a number" }).min(0, "Stock cannot be negative"),
+  costPrice: z.coerce.number({ message: "Cost price must be a number" }).min(0, "Price cannot be negative"),
+  sellingPrice: z.coerce.number({ message: "Selling price must be a number" }).min(0, "Price cannot be negative"),
+  lowStockThreshold: z.coerce.number({ message: "Threshold must be a number" }).min(0, "Threshold cannot be negative").default(10),
+  isSmallProduct: z.boolean().default(false),
+  comesInBoxes: z.boolean().default(false),
+  itemsPerBox: z.coerce.number().nullable(),
+  boxCostPrice: z.coerce.number().nullable(),
+  numBoxes: z.coerce.number().nullable(),
   status: z.enum(["active", "inactive"]),
-  image: z.string().optional(),
 });
 
 type ProductFormValues = z.infer<typeof productSchema>;
@@ -50,10 +49,13 @@ export default function ProductEditPage() {
   const params = useParams();
   const router = useRouter();
   const queryClient = useQueryClient();
-  const isNew = params.id === "new";
   const productId = params.id as string;
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // Form setup
+  const [imageFile, setImageFile] = useState<File | null>(null);
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const [imageError, setImageError] = useState<string | null>(null);
+
   const {
     register,
     handleSubmit,
@@ -87,8 +89,20 @@ export default function ProductEditPage() {
   const watchItemsPerBox = watch("itemsPerBox");
   const watchBoxCostPrice = watch("boxCostPrice");
   const watchNumBoxes = watch("numBoxes");
+  const watchUnit = watch("unit");
 
-  // Auto-calculate logic for Boxes
+  useEffect(() => {
+    if (watchType === "measurable") {
+      if (watchUnit === "piece" || watchUnit === "box") {
+        setValue("unit", "kg");
+      }
+    } else {
+       if (watchUnit !== "piece" && watchUnit !== "box") {
+         setValue("unit", "piece");
+       }
+    }
+  }, [watchType, watchUnit, setValue]);
+
   useEffect(() => {
     if (watchType === "non-measurable" && watchComesInBoxes && watchItemsPerBox && watchItemsPerBox > 0) {
        if (watchBoxCostPrice) {
@@ -100,24 +114,6 @@ export default function ProductEditPage() {
     }
   }, [watchType, watchComesInBoxes, watchItemsPerBox, watchBoxCostPrice, watchNumBoxes, setValue]);
 
-  // Image Upload State
-  const [imageFile, setImageFile] = useState<File | null>(null);
-  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
-
-  const handleImageChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (e.target.files && e.target.files[0]) {
-      const file = e.target.files[0];
-      setImageFile(file);
-      setPreviewUrl(URL.createObjectURL(file));
-    }
-  };
-
-  const removeImage = () => {
-    setImageFile(null);
-    setPreviewUrl(null);
-  };
-
-  // Fetch Categories for dropdown
   const { data: categoriesRes } = useQuery({
     queryKey: ["categories_dropdown"],
     queryFn: async () => {
@@ -125,20 +121,17 @@ export default function ProductEditPage() {
       return res.data;
     },
   });
-  const categoriesDb = categoriesRes?.data || [];
+  const categories = categoriesRes?.data || [];
+  const categoryOptions = categories.map((c: any) => ({ label: c.name, value: c._id }));
 
-  // Fetch product data if editing
   const { data: productRes, isLoading: isProductLoading } = useQuery({
     queryKey: ["product", productId],
     queryFn: async () => {
-      if (isNew) return null;
       const res = await api.get(`/products/${productId}`);
       return res.data;
     },
-    enabled: !isNew,
   });
 
-  // Populate form on load
   useEffect(() => {
     if (productRes?.data) {
       const p = productRes.data;
@@ -167,8 +160,7 @@ export default function ProductEditPage() {
     }
   }, [productRes, reset]);
 
-  // Mutation to save 
-  const mutation = useMutation({
+  const updateMutation = useMutation({
     mutationFn: async (data: ProductFormValues) => {
       const formData = new FormData();
       (Object.keys(data) as Array<keyof ProductFormValues>).forEach((key) => {
@@ -184,32 +176,35 @@ export default function ProductEditPage() {
          formData.append("image", imageFile);
       }
 
-      const config = { headers: { "Content-Type": "multipart/form-data" } };
-
-      if (isNew) {
-        if (!imageFile) throw new Error("Image is mandatory for new products");
-        const res = await api.post("/products", formData, config);
-        return res.data;
-      } else {
-        const res = await api.put(`/products/${productId}`, formData, config);
-        return res.data;
-      }
+      const res = await api.put(`/products/${productId}`, formData, {
+        headers: { "Content-Type": "multipart/form-data" },
+      });
+      return res.data;
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["products"] });
-      toast.success(isNew ? "Product created successfully!" : "Product updated successfully!");
+      toast.success("Product updated successfully!");
       router.push("/admin/products");
     },
     onError: (err: any) => {
-      toast.error(err.message || err.response?.data?.error?.message || "Failed to save product.");
+      toast.error(err.message || err.response?.data?.error?.message || "Failed to update product.");
     },
   });
 
-  const onSubmit = (data: ProductFormValues) => {
-    mutation.mutate(data);
+  const handleImageChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    setImageError(null);
+    if (file) {
+      if (file.size > 5 * 1024 * 1024) {
+        setImageError("Image size must be less than 5MB");
+        return;
+      }
+      setImageFile(file);
+      setPreviewUrl(URL.createObjectURL(file));
+    }
   };
 
-  if (!isNew && isProductLoading) {
+  if (isProductLoading) {
     return (
       <div className="flex justify-center items-center h-screen">
         <Loader2 className="w-8 h-8 animate-spin text-muted-foreground" />
@@ -218,312 +213,321 @@ export default function ProductEditPage() {
   }
 
   return (
-    <div className="max-w-4xl mx-auto space-y-6 pb-20">
-      <div className="flex items-center gap-4">
-        <Button variant="ghost" size="icon" asChild>
-          <Link href="/admin/products">
+    <div className="container max-w-7xl mx-auto pb-20 space-y-8 px-4 sm:px-6">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+        <div className="flex items-center gap-4">
+          <Button variant="ghost" size="icon" className="h-10 w-10" onClick={() => router.back()}>
             <ArrowLeft className="w-5 h-5" />
-          </Link>
-        </Button>
-        <h1 className="text-3xl font-bold tracking-tight">
-          {isNew ? "Create Product" : "Edit Product"}
-        </h1>
+          </Button>
+          <div className="space-y-0.5">
+            <h1 className="text-3xl font-black tracking-tight text-slate-900 leading-none">Edit Product</h1>
+            <p className="text-sm text-muted-foreground font-medium italic">Update information and technical parameters for <span className="text-primary font-bold">{productRes?.data?.name}</span></p>
+          </div>
+        </div>
       </div>
 
-      <form onSubmit={handleSubmit((data) => onSubmit(data as ProductFormValues))} className="space-y-6">
-        <Card>
-          <CardHeader>
-            <CardTitle>Basic Details</CardTitle>
-            <CardDescription>Main configuration and image</CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-6">
-            <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between p-4 border rounded-md gap-4 bg-muted/5">
-              <div className="space-y-0.5 max-w-sm">
-                <Label className="text-base font-semibold">Product Image*</Label>
-                <p className="text-sm text-muted-foreground">
-                  A clear image is required for easy identification.
-                </p>
-              </div>
-              <div className="flex items-center gap-4">
-                {previewUrl ? (
-                  <div className="relative w-32 h-32 border rounded-xl overflow-hidden bg-white shadow-sm group">
-                    <img src={previewUrl} alt="Preview" className="w-full h-full object-cover" />
-                    <button 
-                      type="button"
-                      onClick={removeImage}
-                      className="absolute top-2 right-2 bg-red-500 text-white rounded-full p-1 shadow-lg opacity-0 group-hover:opacity-100 transition-opacity"
+      <form onSubmit={handleSubmit((data) => updateMutation.mutate(data))} className="grid grid-cols-1 xl:grid-cols-12 gap-8 items-start">
+        {/* Left Column: Basic Information */}
+        <div className="xl:col-span-5 space-y-6">
+          <Card className="border-2 shadow-sm">
+            <CardHeader className="bg-slate-50/50 border-b pb-4">
+              <CardTitle className="text-lg font-bold flex items-center gap-2">
+                <span className="w-8 h-8 rounded-lg bg-primary/10 text-primary flex items-center justify-center text-sm">01</span>
+                Basic Information
+              </CardTitle>
+              <CardDescription>Visual identification and classification</CardDescription>
+            </CardHeader>
+            <CardContent className="pt-6 space-y-6">
+              {/* Image Upload */}
+              <div className="space-y-3">
+                <Label className="text-sm font-bold text-slate-700 flex items-center gap-2">
+                  Product Image {imageError && <AlertCircle className="w-4 h-4 text-destructive" />}
+                </Label>
+                <div className={cn(
+                  "flex flex-col items-center gap-4 p-8 border-2 border-dashed rounded-2xl transition-all duration-300",
+                  previewUrl ? "border-primary/20 bg-primary/5" : "border-slate-200 bg-slate-50/50 hover:border-primary/30",
+                  imageError && "border-destructive/30 bg-destructive/5"
+                )}>
+                  {previewUrl ? (
+                    <div className="relative group">
+                      <img src={previewUrl} className="w-48 h-48 object-contain rounded-xl bg-white shadow-xl p-2" alt="Preview" />
+                      <button
+                        type="button"
+                        onClick={() => { setImageFile(null); setPreviewUrl(null); }}
+                        className="absolute -top-3 -right-3 bg-red-500 text-white rounded-full p-2.5 shadow-lg border-2 border-white hover:scale-110 transition-transform"
+                      >
+                        <X className="w-4 h-4" />
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="w-48 h-48 flex flex-col items-center justify-center bg-white rounded-xl text-slate-400 border-2 border-slate-100 shadow-inner">
+                      <ImageIcon className="w-16 h-16 mb-4 opacity-10" />
+                      <div className="text-center px-4">
+                        <span className="text-[10px] uppercase font-black tracking-widest block mb-1">Max Size 5MB</span>
+                        <span className="text-xs font-bold leading-tight">No Image Selected</span>
+                      </div>
+                    </div>
+                  )}
+                  <input ref={fileInputRef} type="file" accept="image/*" className="hidden" onChange={handleImageChange} />
+                  <div className="flex flex-col items-center gap-2">
+                    <Button 
+                      type="button" 
+                      variant={imageError ? "destructive" : "outline"} 
+                      className="rounded-full px-6 font-bold"
+                      onClick={() => fileInputRef.current?.click()}
                     >
-                      <X className="w-3 h-3" />
-                    </button>
+                      {previewUrl ? "Change Image" : "Upload Image"}
+                    </Button>
+                    {imageError && <p className="text-[10px] text-destructive font-black uppercase tracking-tighter">{imageError}</p>}
                   </div>
-                ) : (
-                  <div className="w-32 h-32 border-2 border-dashed rounded-xl flex items-center justify-center bg-muted/30">
-                    <ImageIcon className="w-10 h-10 text-muted-foreground opacity-30" />
-                  </div>
-                )}
-                <div className="flex flex-col gap-2">
-                  <Input 
-                    type="file" 
-                    accept="image/*" 
-                    className="max-w-[200px]" 
-                    onChange={handleImageChange} 
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="name" className="text-sm font-bold text-slate-700">Product Name*</Label>
+                <Input 
+                  id="name" 
+                  {...register("name")} 
+                  placeholder="e.g. Dairy Milk Silk" 
+                  className={cn("h-12 text-base font-medium rounded-xl border-2 focus-visible:ring-primary/20", errors.name && "border-destructive/50")} 
+                />
+                {errors.name && <p className="text-[10px] text-destructive font-black uppercase tracking-widest pl-1">{errors.name.message}</p>}
+              </div>
+
+              <div className="space-y-2">
+                <Label className="text-sm font-bold text-slate-700">Categories*</Label>
+                <Controller
+                  name="categoryIds"
+                  control={control}
+                  render={({ field }) => (
+                    <MultiSelect
+                      options={categoryOptions}
+                      selected={field.value}
+                      onChange={field.onChange}
+                      placeholder="Search and select categories..."
+                      className={cn("border-2 rounded-xl h-auto min-h-12", errors.categoryIds && "border-destructive/50")}
+                    />
+                  )}
+                />
+                {errors.categoryIds && <p className="text-[10px] text-destructive font-black uppercase tracking-widest pl-1">{errors.categoryIds.message}</p>}
+              </div>
+            </CardContent>
+          </Card>
+        </div>
+
+        {/* Right Column: Configuration & Technical */}
+        <div className="xl:col-span-7 space-y-6">
+          <Card className="border-2 shadow-sm overflow-hidden">
+            <CardHeader className="bg-slate-50/50 border-b pb-4">
+              <CardTitle className="text-lg font-bold flex items-center gap-2">
+                <span className="w-8 h-8 rounded-lg bg-primary/10 text-primary flex items-center justify-center text-sm">02</span>
+                Product Configuration
+              </CardTitle>
+              <CardDescription>Units, Pricing and Stock control</CardDescription>
+            </CardHeader>
+            <CardContent className="pt-6 space-y-8">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <div className="space-y-2">
+                  <Label className="text-sm font-bold text-slate-700">Type of Product*</Label>
+                  <Controller
+                    name="type"
+                    control={control}
+                    render={({ field }) => (
+                      <Select onValueChange={field.onChange} value={field.value}>
+                        <SelectTrigger className="h-12 border-2 rounded-xl font-medium"><SelectValue /></SelectTrigger>
+                        <SelectContent className="rounded-xl">
+                          <SelectItem value="non-measurable">Discrete / Units (Non-Measurable)</SelectItem>
+                          <SelectItem value="measurable">Bulk / Weight (Measurable)</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    )}
                   />
-                  <p className="text-[10px] text-muted-foreground">PNG, JPG up to 5MB</p>
+                  {errors.type && <p className="text-[10px] text-destructive font-black uppercase tracking-widest pl-1">{errors.type.message}</p>}
                 </div>
-              </div>
-            </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
-              <div className="space-y-2">
-                <Label>Product Name*</Label>
-                <Input {...register("name")} placeholder="e.g. Dairy Milk Silk" className="h-11" />
-                {errors.name && <p className="text-red-500 text-sm">{errors.name.message}</p>}
-              </div>
-
-              <div className="space-y-2">
-                <Label>Categories* (Multi-select)</Label>
-                <div className="grid grid-cols-1 gap-1 border rounded-md p-3 max-h-40 overflow-y-auto bg-muted/5">
-                  {categoriesDb.map((c: any) => (
-                    <label key={c._id} className="flex items-center gap-2 p-1 hover:bg-muted/10 cursor-pointer rounded">
-                        <Controller
-                            name="categoryIds"
-                            control={control}
-                            render={({ field }) => (
-                                <input
-                                    type="checkbox"
-                                    className="rounded border-gray-300"
-                                    checked={field.value.includes(c._id)}
-                                    onChange={(e) => {
-                                        const newVal = e.target.checked
-                                            ? [...field.value, c._id]
-                                            : field.value.filter((id: string) => id !== c._id);
-                                        field.onChange(newVal);
-                                    }}
-                                />
-                            )}
-                        />
-                        <span className="text-sm">{c.name}</span>
-                    </label>
-                  ))}
-                </div>
-                {errors.categoryIds && <p className="text-red-500 text-sm">{errors.categoryIds.message}</p>}
-              </div>
-
-              <div className="space-y-2">
-                <Label>Product Type*</Label>
-                <Controller
-                  name="type"
-                  control={control}
-                  render={({ field }) => (
-                    <Select onValueChange={field.onChange} value={field.value}>
-                      <SelectTrigger className="h-11">
-                        <SelectValue placeholder="Select type" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="non-measurable">Discrete / Units (Non-Measurable)</SelectItem>
-                        <SelectItem value="measurable">Bulk / Weight (Measurable)</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  )}
-                />
-              </div>
-
-              <div className="space-y-2">
-                <Label>Unit of Measurement*</Label>
-                <Controller
-                  name="unit"
-                  control={control}
-                  render={({ field }) => (
-                    <Select onValueChange={field.onChange} value={field.value}>
-                      <SelectTrigger className="h-11">
-                        <SelectValue placeholder="e.g. piece, kg" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {watchType === "measurable" ? (
-                          <>
-                            <SelectItem value="kg">kg</SelectItem>
-                            <SelectItem value="g">gram</SelectItem>
-                            <SelectItem value="l">liter</SelectItem>
-                            <SelectItem value="ml">ml</SelectItem>
-                          </>
-                        ) : (
-                          <>
-                            <SelectItem value="piece">piece</SelectItem>
-                            <SelectItem value="pack">pack</SelectItem>
-                            <SelectItem value="box">box</SelectItem>
-                          </>
-                        )}
-                      </SelectContent>
-                    </Select>
-                  )}
-                />
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader>
-            <CardTitle>Inventory & Pricing</CardTitle>
-            <CardDescription>Setup stock levels and purchase logic</CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-6">
-            {watchType === "non-measurable" && (
-              <div className="bg-violet-50/50 p-6 rounded-xl space-y-4 border border-violet-100">
-                <div className="flex items-center justify-between">
-                   <div className="space-y-1">
-                      <Label className="text-violet-900 font-bold">Purchased in Boxes?</Label>
-                      <p className="text-xs text-violet-600">Calculate per-piece cost and stock automatically</p>
-                   </div>
+                <div className="space-y-2">
+                   <Label className="text-sm font-bold text-slate-700">Base Unit*</Label>
                    <Controller
-                    name="comesInBoxes"
+                    name="unit"
+                    control={control}
+                    render={({ field }) => (
+                      <Select onValueChange={field.onChange} value={field.value}>
+                        <SelectTrigger className="h-12 border-2 rounded-xl font-medium"><SelectValue /></SelectTrigger>
+                        <SelectContent className="rounded-xl">
+                          {watchType === "measurable" ? (
+                            <>
+                              <SelectItem value="kg">kilogram (kg)</SelectItem>
+                              <SelectItem value="g">gram (g)</SelectItem>
+                              <SelectItem value="l">liter (l)</SelectItem>
+                              <SelectItem value="ml">milliliter (ml)</SelectItem>
+                            </>
+                          ) : (
+                            <>
+                              <SelectItem value="piece">piece</SelectItem>
+                              <SelectItem value="box">box</SelectItem>
+                            </>
+                          )}
+                        </SelectContent>
+                      </Select>
+                    )}
+                  />
+                  {errors.unit && <p className="text-[10px] text-destructive font-black uppercase tracking-widest pl-1">{errors.unit.message}</p>}
+                </div>
+              </div>
+
+              {/* Box Purchase Logic */}
+              {watchType === "non-measurable" && (
+                <div className={cn(
+                  "p-6 rounded-2xl border-2 transition-all duration-300",
+                  watchComesInBoxes ? "bg-violet-50/50 border-violet-200" : "bg-slate-50 border-slate-100"
+                )}>
+                  <div className="flex items-center justify-between gap-4 mb-4">
+                    <div className="space-y-1">
+                      <p className="font-black text-sm text-violet-900 uppercase tracking-tight">Box-Based Purchasing</p>
+                      <p className="text-xs text-violet-600 font-medium">Auto-calculates individual cost from box price</p>
+                    </div>
+                    <Controller name="comesInBoxes" control={control} render={({ field }) => (
+                      <Switch checked={field.value} onCheckedChange={field.onChange} className="data-[state=checked]:bg-violet-600" />
+                    )} />
+                  </div>
+
+                  {watchComesInBoxes && (
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-6 pt-6 border-t border-violet-100 animate-in fade-in slide-in-from-top-4">
+                      <div className="space-y-2">
+                        <Label className="text-[10px] font-black uppercase text-violet-700 tracking-widest">Boxes Current</Label>
+                        <Input type="number" {...register("numBoxes")} placeholder="0" className="h-11 border-2 rounded-xl border-violet-100 bg-white font-bold" />
+                      </div>
+                      <div className="space-y-2">
+                        <Label className="text-[10px] font-black uppercase text-violet-700 tracking-widest">Items / Box</Label>
+                        <Input type="number" {...register("itemsPerBox")} placeholder="24" className="h-11 border-2 rounded-xl border-violet-100 bg-white font-bold" />
+                      </div>
+                      <div className="space-y-2">
+                        <Label className="text-[10px] font-black uppercase text-violet-700 tracking-widest">Cost / Box (₹)</Label>
+                        <Input type="number" step="any" {...register("boxCostPrice")} placeholder="0.00" className="h-11 border-2 rounded-xl border-violet-100 bg-white font-bold" />
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-8">
+                <div className="space-y-2">
+                  <Label className="text-sm font-bold text-slate-700 flex justify-between">
+                    <span>Cost Price*</span>
+                    {watchComesInBoxes && <Badge className="bg-violet-100 text-violet-700 border-none px-1.5 py-0 text-[8px] h-4">AUTO</Badge>}
+                  </Label>
+                  <div className="relative">
+                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 font-bold">₹</span>
+                    <Input 
+                      type="number" 
+                      step="any" 
+                      {...register("costPrice")} 
+                      disabled={watchComesInBoxes} 
+                      className={cn("h-12 pl-8 border-2 rounded-xl font-black text-base", watchComesInBoxes ? "bg-slate-100/50 text-slate-500" : "bg-white", errors.costPrice && "border-destructive/50")} 
+                    />
+                  </div>
+                  {errors.costPrice && <p className="text-[10px] text-destructive font-black uppercase tracking-widest pl-1">{errors.costPrice.message}</p>}
+                </div>
+
+                <div className="space-y-2">
+                  <Label className="text-sm font-bold text-slate-700">Selling Price*</Label>
+                  <div className="relative">
+                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 font-bold">₹</span>
+                    <Input 
+                      type="number" 
+                      step="any" 
+                      {...register("sellingPrice")} 
+                      className={cn("h-12 pl-8 border-2 rounded-xl font-black text-base transition-all focus:border-[var(--seller)]", errors.sellingPrice && "border-destructive/50")} 
+                    />
+                  </div>
+                  {errors.sellingPrice && <p className="text-[10px] text-destructive font-black uppercase tracking-widest pl-1">{errors.sellingPrice.message}</p>}
+                </div>
+
+                <div className="space-y-2">
+                  <Label className="text-sm font-bold text-slate-700 flex justify-between">
+                    <span>Stock Level*</span>
+                    {watchComesInBoxes && <Badge className="bg-violet-100 text-violet-700 border-none px-1.5 py-0 text-[8px] h-4">AUTO</Badge>}
+                  </Label>
+                  <Input 
+                    type="number" 
+                    step="any" 
+                    {...register("stock")} 
+                    disabled={watchComesInBoxes} 
+                    className={cn("h-12 border-2 rounded-xl font-black text-base", watchComesInBoxes ? "bg-slate-100/50 text-slate-500" : "bg-white", errors.stock && "border-destructive/50")} 
+                  />
+                  {errors.stock && <p className="text-[10px] text-destructive font-black uppercase tracking-widest pl-1">{errors.stock.message}</p>}
+                </div>
+              </div>
+
+              <div className="flex flex-col sm:flex-row items-start sm:items-center gap-6 pt-4 border-t border-slate-100">
+                <div className="flex-1 space-y-1">
+                   <p className="font-black text-sm text-orange-900 uppercase tracking-tight italic flex items-center gap-2">
+                     <AlertCircle className="w-4 h-4" /> Low Stock Warning
+                   </p>
+                   <p className="text-[11px] text-orange-600 font-medium">Notify when inventory drops below this quantity</p>
+                </div>
+                <div className="w-full sm:w-auto">
+                   <Input 
+                     type="number" 
+                     {...register("lowStockThreshold")} 
+                     className="w-full sm:w-32 h-12 bg-white border-2 border-orange-100 rounded-xl font-black text-center text-orange-900 focus-visible:ring-orange-200" 
+                   />
+                   {errors.lowStockThreshold && <p className="text-[10px] text-destructive font-black uppercase tracking-widest mt-1 text-center">{errors.lowStockThreshold.message}</p>}
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-4 border-t border-slate-100">
+                <div className="p-6 rounded-2xl border-2 border-primary/10 bg-primary/5 flex items-center justify-between gap-4">
+                  <div className="space-y-1">
+                    <p className="font-bold text-sm text-slate-900">Small Product</p>
+                    <p className="text-xs text-muted-foreground font-medium">Quick selection in POS</p>
+                  </div>
+                  <Controller
+                    name="isSmallProduct"
                     control={control}
                     render={({ field }) => (
                       <Switch checked={field.value} onCheckedChange={field.onChange} />
                     )}
                   />
                 </div>
-
-                {watchComesInBoxes && (
-                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 pt-4 border-t border-violet-100 ">
-                    <div className="space-y-2">
-                      <Label className="text-xs font-semibold text-violet-700">Num Boxes</Label>
-                      <Input 
-                        type="number" 
-                        {...register("numBoxes", { valueAsNumber: true })}
-                        className="bg-white"
-                      />
-                    </div>
-                    <div className="space-y-2">
-                      <Label className="text-xs font-semibold text-violet-700">Items per Box</Label>
-                      <Input 
-                        type="number" 
-                        {...register("itemsPerBox", { valueAsNumber: true })}
-                        className="bg-white"
-                      />
-                    </div>
-                    <div className="space-y-2">
-                      <Label className="text-xs font-semibold text-violet-700">Cost/Box (₹)</Label>
-                      <Input 
-                        type="number" 
-                        step="0.01" 
-                        {...register("boxCostPrice", { valueAsNumber: true })}
-                        className="bg-white"
-                      />
-                    </div>
+                
+                <div className="p-6 rounded-2xl border-2 border-slate-100 bg-slate-50 flex items-center justify-between gap-4">
+                  <div className="space-y-1">
+                    <p className="font-bold text-sm text-slate-900">Product Status</p>
+                    <p className="text-xs text-muted-foreground font-medium">{watch("status") === 'active' ? 'Visible to sellers' : 'Hidden from terminal'}</p>
                   </div>
-                )}
-              </div>
-            )}
-
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-6 pt-2">
-              <div className="space-y-2">
-                <Label className="flex justify-between">
-                    <span>Cost Price (₹)*</span>
-                    {watchComesInBoxes && <span className="text-[10px] text-violet-600 font-bold uppercase">Auto</span>}
-                </Label>
-                <Input 
-                  type="number" 
-                  step="0.01" 
-                  {...register("costPrice", { valueAsNumber: true })} 
-                  disabled={watchComesInBoxes}
-                  className={watchComesInBoxes ? "bg-muted/50 cursor-not-allowed" : "h-11"}
-                />
-                {errors.costPrice && <p className="text-red-500 text-sm">{errors.costPrice.message}</p>}
-              </div>
-              <div className="space-y-2">
-                <Label>Selling Price (₹)*</Label>
-                <Input 
-                  type="number" 
-                  step="0.01" 
-                  {...register("sellingPrice", { valueAsNumber: true })} 
-                  className="h-11"
-                />
-                {errors.sellingPrice && <p className="text-red-500 text-sm">{errors.sellingPrice.message}</p>}
-              </div>
-              <div className="space-y-2">
-                <Label className="flex justify-between">
-                    <span>Available Stock*</span>
-                    {watchComesInBoxes && <span className="text-[10px] text-violet-600 font-bold uppercase">Auto</span>}
-                </Label>
-                <Input 
-                  type="number" 
-                  step="0.01" 
-                  {...register("stock", { valueAsNumber: true })} 
-                  disabled={watchComesInBoxes}
-                  className={watchComesInBoxes ? "bg-muted/50 cursor-not-allowed" : "h-11"}
-                />
-                {errors.stock && <p className="text-red-500 text-sm">{errors.stock.message}</p>}
-              </div>
-            </div>
-
-            <div className="bg-orange-50/50 p-5 rounded-lg border border-orange-100 flex items-center justify-between">
-                <div className="space-y-0.5">
-                    <Label className="text-orange-900 font-bold">Low Stock Warning</Label>
-                    <p className="text-xs text-orange-600">Alert threshold for notifications</p>
+                  <Controller
+                    name="status"
+                    control={control}
+                    render={({ field }) => (
+                      <Select onValueChange={field.onChange} value={field.value}>
+                        <SelectTrigger className="w-24 h-10 border-2 rounded-xl bg-white"><SelectValue /></SelectTrigger>
+                        <SelectContent className="rounded-xl">
+                          <SelectItem value="active">Active</SelectItem>
+                          <SelectItem value="inactive">Inactive</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    )}
+                  />
                 </div>
-                <Input 
-                    type="number" 
-                    {...register("lowStockThreshold", { valueAsNumber: true })} 
-                    className="w-24 bg-white"
-                />
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader>
-            <CardTitle>System Settings</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <div className="flex items-center justify-between p-4 border rounded-md">
-              <div className="space-y-0.5">
-                <Label className="text-base">Small POS Product</Label>
-                <p className="text-sm text-muted-foreground">
-                  Allow quick checkout for this item (detected based on price threshold).
-                </p>
               </div>
-              <Controller
-                name="isSmallProduct"
-                control={control}
-                render={({ field }) => (
-                  <Switch checked={field.value} onCheckedChange={field.onChange} />
-                )}
-              />
-            </div>
-            
-            <div className="flex items-center justify-between p-4 border rounded-md">
-              <div className="space-y-0.5">
-                <Label className="text-base">Status</Label>
-                <p className="text-sm text-muted-foreground">Active products are visible to sellers.</p>
-              </div>
-              <Controller
-                name="status"
-                control={control}
-                render={({ field }) => (
-                  <Select onValueChange={field.onChange} value={field.value}>
-                    <SelectTrigger className="w-[140px] h-11">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="active">Active</SelectItem>
-                      <SelectItem value="inactive">Inactive</SelectItem>
-                    </SelectContent>
-                  </Select>
-                )}
-              />
-            </div>
-          </CardContent>
-        </Card>
 
-        <div className="flex justify-end gap-4 pb-10">
-          <Button variant="outline" type="button" onClick={() => router.back()} disabled={mutation.isPending} className="h-12 px-8">
-            Cancel
-          </Button>
-          <Button type="submit" disabled={mutation.isPending} className="h-12 px-10 font-bold">
-            {mutation.isPending ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Save className="w-4 h-4 mr-2" />}
-            Save Changes
-          </Button>
+              <div className="flex justify-end gap-4 pt-4">
+                <Button type="button" variant="ghost" onClick={() => router.back()} className="w-full sm:w-auto h-14 px-8 font-bold text-slate-500 rounded-2xl hover:bg-slate-100">Cancel</Button>
+                <Button 
+                  type="submit" 
+                  disabled={updateMutation.isPending} 
+                  className="w-full sm:w-auto h-14 px-12 font-black text-lg shadow-xl shadow-primary/20 rounded-2xl active:scale-95 transition-all"
+                >
+                  {updateMutation.isPending ? (
+                    <><Loader2 className="w-5 h-5 animate-spin mr-3" /> Updating...</>
+                  ) : (
+                    <><Save className="w-5 h-5 mr-3" /> Update Product</>
+                  )}
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
         </div>
       </form>
     </div>

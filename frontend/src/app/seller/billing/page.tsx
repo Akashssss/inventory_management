@@ -12,13 +12,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useQueryState } from "nuqs";
 import { api } from "@/lib/api";
 import { toast } from "sonner";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
+import { SearchableSelect } from "@/components/ui/SearchableSelect";
 import {
   Dialog,
   DialogContent,
@@ -51,7 +45,7 @@ export default function BillingPage() {
     queryFn: async () => {
       const filterConditions = [];
       if (categoryFilter !== "all") {
-        filterConditions.push({ field: "categoryId", operator: "eq", value: categoryFilter });
+        filterConditions.push({ field: "categories", operator: "in", value: [categoryFilter] });
       }
       filterConditions.push({ field: "status", operator: "eq", value: "active" });
 
@@ -232,23 +226,18 @@ export default function BillingPage() {
             )}
           </div>
           
-          <div className="flex items-center gap-2 w-full sm:w-auto overflow-x-auto">
-            <Select value={categoryFilter} onValueChange={setCategoryFilter}>
-              <SelectTrigger className="w-[180px] h-10 bg-white">
-                <Filter className="w-4 h-4 mr-2 text-muted-foreground" />
-                <SelectValue placeholder="All Categories" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">All Categories</SelectItem>
-                {categoriesDb.map((c: any) => (
-                  <SelectItem key={c._id} value={c._id}>{c.name}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+          <div className="flex flex-col sm:flex-row items-center gap-2 w-full sm:w-auto">
+            <SearchableSelect
+              options={[{ label: "All Categories", value: "all" }, ...categoriesDb.map((c: any) => ({ label: c.name, value: c._id }))]}
+              value={categoryFilter}
+              onChange={setCategoryFilter}
+              placeholder="All Categories"
+              className="w-full sm:w-[200px]"
+            />
 
             <Button 
               variant="outline" 
-              className="h-10 border-orange-500 text-orange-600 hover:bg-orange-50 whitespace-nowrap"
+              className="w-full sm:w-auto h-10 md:h-11 border-orange-500 text-orange-600 hover:bg-orange-50 whitespace-nowrap px-4"
               onClick={() => setQuickModeOpen(true)}
             >
               <Flashlight className="mr-2 h-4 w-4" /> Quick Mode
@@ -290,7 +279,7 @@ export default function BillingPage() {
                         )}
                         {(p.stock === 0 && !p.availableStock) ? (
                           <Badge variant="destructive" className="text-[9px] md:text-[10px] font-bold px-1.5 py-0">Out of Stock</Badge>
-                        ) : (p.availableStock || p.stock || 0) < 10 && (
+                        ) : (p.availableStock || p.stock || 0) < (p.lowStockThreshold || 10) && (
                           <Badge variant="outline" className="bg-orange-50 text-orange-700 border-orange-200 text-[9px] md:text-[10px] font-bold px-1.5 py-0 animate-pulse">Low Stock</Badge>
                         )}
                       </div>
@@ -299,7 +288,7 @@ export default function BillingPage() {
                       <div>
                         <h3 className="font-bold text-sm line-clamp-2 leading-tight min-h-[2.5rem] text-slate-800">{p.name}</h3>
                         <p className="text-[10px] font-medium text-muted-foreground mt-1 uppercase tracking-wider">
-                          {p.unit} &middot; <span className={(p.availableStock || p.stock || 0) < 10 ? "text-orange-600 font-bold" : ""}>Stock: {p.availableStock || p.stock || 0}</span>
+                          {p.unit} &middot; <span className={(p.availableStock || p.stock || 0) < (p.lowStockThreshold || 10) ? "text-orange-600 font-bold" : ""}>Stock: {p.availableStock || p.stock || 0}</span>
                         </p>
                       </div>
                       <div className="mt-3 md:mt-4 flex flex-wrap gap-2 items-center justify-between">
@@ -350,7 +339,7 @@ export default function BillingPage() {
       </div>
 
       {/* Right side: Cart/Billing */}
-      <div className="w-full lg:w-96 border-t lg:border-t-0 lg:border-l bg-white flex flex-col h-[45vh] lg:h-screen shadow-[0_-10px_20px_rgba(0,0,0,0.05)] lg:shadow-2xl z-20 sticky lg:static bottom-0 overflow-hidden">
+      <div className="w-full lg:w-96 border-t lg:border-t-0 lg:border-l bg-white flex flex-col h-[40dvh] lg:h-screen shadow-[0_-10px_20px_rgba(0,0,0,0.05)] lg:shadow-2xl z-20 sticky lg:static bottom-0 overflow-hidden">
         <div className="p-4 md:p-6 border-b flex items-center justify-between bg-slate-50">
           <div className="flex flex-col">
              <h2 className="font-black text-lg text-slate-900 leading-none">Bill Details</h2>

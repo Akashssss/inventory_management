@@ -43,7 +43,7 @@ export function AdminSidebar() {
   return (
     <>
       {/* Mobile Topbar */}
-      <div className="md:hidden fixed top-0 left-0 right-0 topbar-h bg-background border-b z-40 flex items-center justify-between px-4 safe-padding">
+      <div className="lg:hidden fixed top-0 left-0 right-0 topbar-h bg-background border-b z-40 flex items-center justify-between px-4 safe-padding">
         <div className="flex items-center gap-2 font-bold text-[var(--brand)]">
           <Package className="w-5 h-5" /> Admin
         </div>
@@ -55,15 +55,15 @@ export function AdminSidebar() {
       {/* Mobile Overlay */}
       {isOpen && (
         <div 
-          className="md:hidden fixed inset-0 bg-black/50 z-40 backdrop-blur-sm transition-opacity"
+          className="lg:hidden fixed inset-0 bg-black/50 z-40 backdrop-blur-sm transition-opacity"
           onClick={() => setIsOpen(false)}
         />
       )}
 
       {/* Sidebar Content */}
       <div className={`
-        fixed md:sticky top-0 left-0 h-[100dvh] w-[280px] md:w-64 border-r bg-background/95 backdrop-blur-md z-50 flex flex-col
-        sidebar-transition ${isOpen ? "translate-x-0 shadow-2xl" : "-translate-x-full md:translate-x-0"}
+        fixed lg:sticky top-0 left-0 h-[100dvh] w-[280px] lg:w-64 border-r bg-background/95 backdrop-blur-md z-50 flex flex-col
+        sidebar-transition ${isOpen ? "translate-x-0 shadow-2xl" : "-translate-x-full lg:translate-x-0"}
       `}>
         <div className="p-6 border-b flex items-center justify-between">
           <div>
@@ -72,7 +72,7 @@ export function AdminSidebar() {
             </h2>
             <p className="text-xs text-muted-foreground mt-1">Admin Portal</p>
           </div>
-          <button onClick={() => setIsOpen(false)} className="md:hidden p-2 text-muted-foreground">
+          <button onClick={() => setIsOpen(false)} className="lg:hidden p-2 text-muted-foreground">
             <X className="w-5 h-5" />
           </button>
         </div>
